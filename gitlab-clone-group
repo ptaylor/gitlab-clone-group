@@ -1,37 +1,92 @@
 #!/usr/bin/env python3
 
-import gitlab;
-import subprocess;
+import gitlab
+import subprocess
+import argparse
+import os
+import sys
+import requests
 
-TOKEN='XXXXXXXXXXXXXXXXX'
-ENDPOINT='http://git4lab8.labs.mastercard.com/gitlab8'
 
-gl = gitlab.Gitlab(ENDPOINT, private_token=TOKEN)
+parser = argparse.ArgumentParser(description="""
+Clone all respositories in a gitlab group.
+""")
+parser.add_argument(
+        'group', 
+	nargs=1, 
+	help='The gitlab group')
+parser.add_argument(
+        '--token', '-t', 
+	nargs=1, 
+	action='store', 
+	dest='token', 
+	help='Your gitlab API token')
+parser.add_argument(
+        '--url', '-u', 
+	nargs=1, 
+	action='store', 
+	dest='url', 
+	default='http://git4lab8.labs.mastercard.com/gitlab8', 
+	help= 'The gitlab API endpoint')
+parser.add_argument(
+        '--dry-run', '-d', 
+	action='store_true', 
+	dest='dryrun', 
+	default=False,
+	help= 'Dry run, just print the repositories to clone')
+
+args = parser.parse_args()
+
+group_path = args.group[0]
+dry_run = args.dryrun
+
+def get_env(n):
+  if n in os.environ:
+    return os.environ[n]
+
+def split_group(group):
+  i = group.find('/')
+  if i == -1:
+    return (group, None)
+  else:
+    return (group[0:i], group[i + 1:])
+
+def gitlab_init(url, token):
+  return gitlab.Gitlab(url, token)
 
 
-def clone_project(project):
+def filter_subgroup(project, group_path):
+    full_path = project.namespace['full_path']
+    return full_path.startswith(group_path)
+
+
+def remove_group_path(path, group_path):
+    return path[len(group_path) + 1:]
+
+def clone_project(project, group_path, dry_run):
     http_url = project.http_url_to_repo
-    #print(f"http {http_url}")
     name = project.name
     path = project.path
     description = project.description
-    #print(f"name {name}, path: {path}, desription: {description}")
     namespace = project.namespace
     full_path = namespace['full_path']
-    #print(f"full_path: {full_path}")
-    print(f"name {name}, path: {path}, full_path: {full_path}, url: {http_url}")
 
-    clone_dir=f"{full_path}/{path}"
+    subdir = remove_group_path(full_path, group_path)
+    if subdir == "":
+        subdir = "."
+    else:
+        subdir = f"./{subdir}"
+    clone_dir = f"{subdir}/{path}"
+
     print(f"cloning {http_url} to {clone_dir}")
+    if not dry_run:
+      subprocess.run(["git","clone", http_url, clone_dir])
 
-    subprocess.run(["git","clone", http_url, clone_dir])
+def clone_group(gitlab, group_path, dry_run):
 
-def clone_group(group_id):
+    (group, subgroup) = split_group(group_path)
 
-    group = gl.groups.get(group_id)
-
-    # page=1, per_page=10
-    #include_subgroups
+    gitlab_group = gitlab.groups.get(group)
 
     current_page=1
     page_size=10
@@ -39,22 +94,40 @@ def clone_group(group_id):
     total_projects = 0
     while not done:
 
-      print(f"getting projects - current_page: {current_page}, page_size: {page_size}")
-      projects = group.projects.list(page=current_page, per_page = page_size, include_subgroups = True)
+      projects = gitlab_group.projects.list(page=current_page, per_page = page_size, include_subgroups = True)
 
       num_projects = len(projects)
-      print(f"-> num_projects {num_projects}")
-
       current_page = current_page + 1
       done = num_projects == 0
 
       for project in projects:
-        clone_project(project)
-        total_projects = total_projects + 1
+        if (filter_subgroup(project, group_path)):
+          clone_project(project, group_path, dry_run)
+          total_projects = total_projects + 1
 
     print(f"total projects: {total_projects}")
 
 
-clone_group('infrastructure')
+token = args.token
+if token is None:
+  token = get_env('GITLAB_TOKEN')
+
+url = args.url
+
+
+try:
+  gitlab = gitlab_init(url, token)
+  clone_group(gitlab, group_path, dry_run)
+
+except requests.exceptions.ConnectionError as e:
+  print(f"Error connecting to gitlab {url}")
+  sys.exit(1)
+except gitlab.exceptions.GitlabGetError as e:
+  # TODO exception not working
+  print(f"Unable to clone group {group_id}");
+  sys.exit(1);
+
+
+
 
 
