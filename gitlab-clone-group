@@ -5,7 +5,8 @@ import subprocess
 import argparse
 import os
 import sys
-import requests
+import re
+import traceback
 
 
 parser = argparse.ArgumentParser(description="""
@@ -13,32 +14,55 @@ Clone all respositories in a gitlab group.
 """)
 parser.add_argument(
         'group', 
-	nargs=1, 
-	help='The gitlab group')
+        nargs=1, 
+        help='The gitlab group')
 parser.add_argument(
         '--token', '-t', 
-	nargs=1, 
-	action='store', 
-	dest='token', 
-	help='Your gitlab API token')
+        nargs=1, 
+        action='store', 
+        dest='token', 
+        help='Your gitlab API token.  Alternatively set the GITLAB_TOKEN environment variable.')
 parser.add_argument(
         '--url', '-u', 
-	nargs=1, 
-	action='store', 
-	dest='url', 
-	default='http://git4lab8.labs.mastercard.com/gitlab8', 
-	help= 'The gitlab API endpoint')
+        nargs=1, 
+        action='store', 
+        dest='url', 
+        default='http://git4lab8.labs.mastercard.com/gitlab8', 
+        help= 'The gitlab API endpoint. Alternatively set the GITLAB_URL environment variable')
 parser.add_argument(
         '--dry-run', '-d', 
-	action='store_true', 
-	dest='dryrun', 
-	default=False,
-	help= 'Dry run, just print the repositories to clone')
+        action='store_true', 
+        dest='dryrun', 
+        default=False,
+        help= 'Dry run, just print the repositories to clone')
+parser.add_argument(
+        '--exclude', '-e',
+        action='store',
+        dest='exclude',
+        help= 'Repositories matching this regular expression are excluded.')
+parser.add_argument(
+        '--include', '-i',
+        action='store',
+        dest='include',
+        help= 'Only repositories matching this regular expression are included.')
+parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        dest='verbose',
+        default = False,
+        help= 'Verbose mode')
 
 args = parser.parse_args()
 
+VERBOSE = args.verbose
+
 group_path = args.group[0]
 dry_run = args.dryrun
+
+def verbose(m):
+  global VERBOSE
+  if VERBOSE:
+    print(f"++ {m}")
 
 def get_env(n):
   if n in os.environ:
@@ -54,37 +78,62 @@ def split_group(group):
 def gitlab_init(url, token):
   return gitlab.Gitlab(url, token)
 
-
-def filter_subgroup(project, group_path):
-    full_path = project.namespace['full_path']
-    return full_path.startswith(group_path)
-
-
 def remove_group_path(path, group_path):
     return path[len(group_path) + 1:]
 
-def clone_project(project, group_path, dry_run):
-    http_url = project.http_url_to_repo
-    name = project.name
+def filter_subgroup(full_path, group_path):
+    ret = full_path.startswith(group_path)
+    verbose(f"filtering {full_path} against {group_path} -> {ret}")
+    return ret
+
+def compute_full_path(project, group_path):
+    full_path = project.namespace['full_path']
+    sub = remove_group_path(full_path, group_path)
     path = project.path
-    description = project.description
-    namespace = project.namespace
-    full_path = namespace['full_path']
 
-    subdir = remove_group_path(full_path, group_path)
-    if subdir == "":
-        subdir = "."
+    verbose(f"group_path {group_path} full_path {full_path} sub {sub} path {path}")
+    if sub == "":
+        return path
     else:
-        subdir = f"./{subdir}"
-    clone_dir = f"{subdir}/{path}"
+        return f"{sub}/{path}"
 
-    print(f"cloning {http_url} to {clone_dir}")
+def is_included(full_path, include_re):
+    included = True
+    if not include_re is None:
+        included = include_re.search(full_path)
+    ret = True if included else False
+    verbose(f"is_included {full_path} ~ {include_re} -> {ret}")
+    return ret
+
+def is_excluded(full_path, exclude_re):
+    excluded = False
+    if not exclude_re is None:
+        excluded = exclude_re.search(full_path)
+    ret = True if excluded else False
+    verbose(f"is_excluded {full_path} ~ {exclude_re} -> {ret}")
+    return ret
+
+
+def show_project(project):
+    verbose(f"project {project.namespace['full_path']}/{project.name}")
+    
+def clone_project(project, full_path, dry_run):
+
+    http_url = project.http_url_to_repo
+    print(f"cloning {http_url} to {full_path}")
     if not dry_run:
-      subprocess.run(["git","clone", http_url, clone_dir])
+      subprocess.run(["git","clone", http_url, full_path])
 
-def clone_group(gitlab, group_path, dry_run):
+def clone_group(gitlab, group_path, include, exclude, dry_run):
 
     (group, subgroup) = split_group(group_path)
+
+    include_re = None
+    if not include is None:
+        include_re = re.compile(include)
+    exclude_re = None
+    if not exclude is None:
+        exclude_re = re.compile(exclude)
 
     gitlab_group = gitlab.groups.get(group)
 
@@ -101,8 +150,12 @@ def clone_group(gitlab, group_path, dry_run):
       done = num_projects == 0
 
       for project in projects:
-        if (filter_subgroup(project, group_path)):
-          clone_project(project, group_path, dry_run)
+        show_project(project)
+        full_path = compute_full_path(project, group_path)
+        if filter_subgroup(project.namespace['full_path'], group_path) \
+            and is_included(full_path, include_re) \
+            and (not is_excluded(full_path, exclude_re)):
+          clone_project(project, full_path, dry_run)
           total_projects = total_projects + 1
 
     print(f"total projects: {total_projects}")
@@ -113,20 +166,29 @@ if token is None:
   token = get_env('GITLAB_TOKEN')
 
 url = args.url
+if url is None:
+  url = get_env('GITLAB_URL')
 
+include = args.include
+exclude = args.exclude
 
 try:
   gitlab = gitlab_init(url, token)
-  clone_group(gitlab, group_path, dry_run)
+  clone_group(gitlab, group_path, include, exclude, dry_run)
 
-except requests.exceptions.ConnectionError as e:
-  print(f"Error connecting to gitlab {url}")
+#except requests.exceptions.ConnectionError as e:
+#  print(f"Error connecting to gitlab {url}")
+#  sys.exit(1)
+#except gitlab.exceptions.GitlabGetError as e:
+#  # TODO exception not working
+#  print(f"Unable to clone group {group_id}");
+#  sys.exit(1);
+except:
+  e = sys.exc_info()[0]
+  print(f"error {e}")
+  if VERBOSE: 
+    traceback.print_exc(file=sys.stdout)
   sys.exit(1)
-except gitlab.exceptions.GitlabGetError as e:
-  # TODO exception not working
-  print(f"Unable to clone group {group_id}");
-  sys.exit(1);
-
 
 
 
