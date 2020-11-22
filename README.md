@@ -2,6 +2,14 @@
 
 Tool for cloning all projects in a gitlab group.
 
+## Installation
+
+```
+pip install gitlab-clone-group
+```
+
+## Usage
+
 ```
 usage: gitlab-clone-group [-h] [--token TOKEN] [--url URL] [--dry-run] [--exclude EXCLUDE] [--include INCLUDE]
                           [--verbose]
