@@ -14,17 +14,14 @@ Clone all respositories in a gitlab group.
 """)
 parser.add_argument(
         'group', 
-        nargs=1, 
         help='The gitlab group')
 parser.add_argument(
         '--token', '-t', 
-        nargs=1, 
         action='store', 
         dest='token', 
         help='Your gitlab API token.  Alternatively set the GITLAB_TOKEN environment variable.')
 parser.add_argument(
         '--url', '-u', 
-        nargs=1, 
         action='store', 
         dest='url', 
         default='http://git4lab8.labs.mastercard.com/gitlab8', 
@@ -58,6 +55,39 @@ VERBOSE = args.verbose
 
 group_path = args.group[0]
 dry_run = args.dryrun
+
+def main(args):
+  token = args.token
+  if token is None:
+    token = get_env('GITLAB_TOKEN')
+
+  url = args.url
+  print(f"url {url}")
+  if url is None:
+    url = get_env('GITLAB_URL')
+
+  include = args.include
+  exclude = args.exclude
+
+  try:
+    gitlab = gitlab_init(url, token)
+    clone_group(gitlab, group_path, include, exclude, dry_run)
+
+        
+  #except requests.exceptions.ConnectionError as e:
+  #  print(f"Error connecting to gitlab {url}")
+  #  sys.exit(1)
+  #except gitlab.exceptions.GitlabGetError as e:
+  #  # TODO exception not working
+  #  print(f"Unable to clone group {group_id}");
+  #  sys.exit(1);
+  except:
+    e = sys.exc_info()[0]
+    print(f"error {e}")
+    if VERBOSE: 
+      traceback.print_exc(file=sys.stdout)
+    sys.exit(1)
+
 
 def verbose(m):
   global VERBOSE
@@ -161,34 +191,7 @@ def clone_group(gitlab, group_path, include, exclude, dry_run):
     print(f"total projects: {total_projects}")
 
 
-token = args.token
-if token is None:
-  token = get_env('GITLAB_TOKEN')
-
-url = args.url
-if url is None:
-  url = get_env('GITLAB_URL')
-
-include = args.include
-exclude = args.exclude
-
-try:
-  gitlab = gitlab_init(url, token)
-  clone_group(gitlab, group_path, include, exclude, dry_run)
-
-#except requests.exceptions.ConnectionError as e:
-#  print(f"Error connecting to gitlab {url}")
-#  sys.exit(1)
-#except gitlab.exceptions.GitlabGetError as e:
-#  # TODO exception not working
-#  print(f"Unable to clone group {group_id}");
-#  sys.exit(1);
-except:
-  e = sys.exc_info()[0]
-  print(f"error {e}")
-  if VERBOSE: 
-    traceback.print_exc(file=sys.stdout)
-  sys.exit(1)
+main(args)
 
 
 
