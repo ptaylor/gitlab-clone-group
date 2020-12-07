@@ -30,7 +30,7 @@ from distutils.core import setup
 
 setup(
         name='gitlab-clone-group',
-        version='1.0.2',
+        version='1.0.3',
         description='Tool for cloning all repositories in a gitlab group.',
         long_description='Tool for cloning all repositories in a gitlab group.',
         author='Paul Taylor',

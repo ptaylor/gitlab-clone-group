@@ -14,6 +14,7 @@ Clone all respositories in a gitlab group.
 """)
 parser.add_argument(
         'group', 
+        nargs=1,
         help='The gitlab group')
 parser.add_argument(
         '--token', '-t', 
@@ -60,9 +61,11 @@ def main(args):
   token = args.token
   if token is None:
     token = get_env('GITLAB_TOKEN')
+    if token is None:
+      fatal("No token available")
 
   url = args.url
-  print(f"url {url}")
+  verbose(f"gitlab url {url}")
   if url is None:
     url = get_env('GITLAB_URL')
 
@@ -93,6 +96,11 @@ def verbose(m):
   global VERBOSE
   if VERBOSE:
     print(f"++ {m}")
+
+
+def fatal(m):
+  print(f"error: {m}")
+  sys.exit(1)
 
 def get_env(n):
   if n in os.environ:
@@ -151,11 +159,15 @@ def clone_project(project, full_path, dry_run):
 
     http_url = project.http_url_to_repo
     print(f"cloning {http_url} to {full_path}")
+    if os.path.exists(full_path):
+        print(f"WARNING: {full_path} already exists")
+
     if not dry_run:
       subprocess.run(["git","clone", http_url, full_path])
 
 def clone_group(gitlab, group_path, include, exclude, dry_run):
 
+    verbose(f"clone group - group_path {group_path}")
     (group, subgroup) = split_group(group_path)
 
     include_re = None
@@ -165,6 +177,7 @@ def clone_group(gitlab, group_path, include, exclude, dry_run):
     if not exclude is None:
         exclude_re = re.compile(exclude)
 
+    verbose(f"getting group {group}")
     gitlab_group = gitlab.groups.get(group)
 
     current_page=1
